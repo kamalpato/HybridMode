@@ -22,6 +22,17 @@ data class StrapiRefreshRequestDto(
 )
 
 @Serializable
+data class StrapiLogoutRequestDto(
+    val refreshToken: String? = null,
+    val scope: String? = null,
+)
+
+@Serializable
+data class StrapiLogoutResponseDto(
+    val ok: Boolean? = null,
+)
+
+@Serializable
 data class StrapiAuthResponseDto(
     val jwt: String,
     val user: StrapiUserDto? = null,

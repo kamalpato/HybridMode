@@ -62,10 +62,10 @@ import com.hybridmode.app.ui.util.DateFormats
 import com.hybridmode.app.ui.util.ImageRequests
 import com.hybridmode.common.connectivity.ConnectivityStatus
 import com.hybridmode.common.result.AppResult
-import com.hybridmode.domain.model.MediaUpload
-import com.hybridmode.domain.model.UploadSyncStatus
-import com.hybridmode.domain.usecase.upload.ObserveUploadsUseCase
-import com.hybridmode.domain.usecase.upload.SyncPendingUploadsUseCase
+import com.hybridmode.domain.reporting.FieldReport
+import com.hybridmode.domain.reporting.ReportSyncStatus
+import com.hybridmode.domain.application.reporting.ObserveUploadsUseCase
+import com.hybridmode.domain.application.reporting.SyncPendingUploadsUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -150,14 +150,14 @@ fun HomeScreen(
                             ) {
                                 Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                                     Text(
-                                        text = "Hi, ${user?.displayName ?: "there"}",
+                                        text = "Hi, ${user?.displayName?.value ?: "there"}",
                                         style = MaterialTheme.typography.titleMedium.copy(
                                             fontWeight = FontWeight.SemiBold,
                                         ),
                                         color = Stone900,
                                     )
                                     Text(
-                                        text = user?.email.orEmpty(),
+                                        text = user?.email?.value.orEmpty(),
                                         style = MaterialTheme.typography.bodySmall,
                                         color = Stone400,
                                     )
@@ -246,21 +246,21 @@ fun HomeScreen(
 
 @Composable
 private fun RecentReportRow(
-    report: MediaUpload,
+    report: FieldReport,
     onClick: () -> Unit,
 ) {
     val context = LocalContext.current
     val statusColor = when (report.syncStatus) {
-        UploadSyncStatus.Synced -> OnlineGreen
-        UploadSyncStatus.Failed -> Danger
-        UploadSyncStatus.Uploading -> MaterialTheme.colorScheme.primary
-        UploadSyncStatus.PendingOffline -> Copper500
+        ReportSyncStatus.Synced -> OnlineGreen
+        ReportSyncStatus.Failed -> Danger
+        ReportSyncStatus.Uploading -> MaterialTheme.colorScheme.primary
+        ReportSyncStatus.PendingOffline -> Copper500
     }
     val statusLabel = when (report.syncStatus) {
-        UploadSyncStatus.Synced -> "Synced"
-        UploadSyncStatus.PendingOffline -> "Pending"
-        UploadSyncStatus.Failed -> "Failed"
-        UploadSyncStatus.Uploading -> "Uploading"
+        ReportSyncStatus.Synced -> "Synced"
+        ReportSyncStatus.PendingOffline -> "Pending"
+        ReportSyncStatus.Failed -> "Failed"
+        ReportSyncStatus.Uploading -> "Uploading"
     }
     val interaction = remember { MutableInteractionSource() }
 
@@ -278,7 +278,7 @@ private fun RecentReportRow(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         AsyncImage(
-            model = ImageRequests.thumbnail(context, report.localFilePath),
+            model = ImageRequests.thumbnail(context, report.localImagePath.value),
             contentDescription = null,
             contentScale = ContentScale.Crop,
             modifier = Modifier
@@ -291,7 +291,7 @@ private fun RecentReportRow(
             verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
             Text(
-                report.title,
+                report.title.value,
                 style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Medium),
                 color = Stone900,
                 maxLines = 1,
@@ -323,7 +323,7 @@ data class HomeOverview(
     val total: Int = 0,
     val synced: Int = 0,
     val waiting: Int = 0,
-    val recent: List<MediaUpload> = emptyList(),
+    val recent: List<FieldReport> = emptyList(),
     val isSyncing: Boolean = false,
     val syncMessage: String? = null,
 )
@@ -342,10 +342,10 @@ class HomeOverviewViewModel @Inject constructor(
     ) { list, epi ->
         HomeOverview(
             total = list.size,
-            synced = list.count { it.syncStatus == UploadSyncStatus.Synced },
+            synced = list.count { it.syncStatus == ReportSyncStatus.Synced },
             waiting = list.count {
-                it.syncStatus == UploadSyncStatus.PendingOffline ||
-                    it.syncStatus == UploadSyncStatus.Failed
+                it.syncStatus == ReportSyncStatus.PendingOffline ||
+                    it.syncStatus == ReportSyncStatus.Failed
             },
             recent = list.take(RECENT_SUBMISSION_LIMIT),
             isSyncing = epi.isSyncing,

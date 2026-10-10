@@ -8,7 +8,7 @@ import com.hybridmode.data.remote.dto.StrapiLoginRequestDto
 import com.hybridmode.data.remote.dto.StrapiRegisterRequestDto
 import com.hybridmode.data.remote.dto.StrapiUploadFileDto
 import com.hybridmode.data.remote.dto.StrapiUserDto
-import com.hybridmode.domain.model.AuthTokens
+import com.hybridmode.domain.auth.AuthTokens
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import okhttp3.Interceptor
@@ -110,6 +110,23 @@ class MockAuthInterceptor @Inject constructor(
                     jwtIndex.remove(issued.token)
                     success(request, issueAuth(account, now))
                 }
+            }
+
+            path.endsWith("/api/auth/logout") && request.method == "POST" -> {
+                val issued = resolveJwt(request.header("Authorization"), now)
+                val rawBody = request.body?.let { bufferBody(it) }.orEmpty()
+                val refresh = runCatching {
+                    json.decodeFromString<Map<String, String>>(rawBody.ifBlank { "{}" })["refreshToken"]
+                }.getOrNull().orEmpty()
+                if (issued != null) {
+                    jwtIndex.remove(issued.token)
+                    refreshIndex.entries
+                        .filter { it.value.userId == issued.userId }
+                        .forEach { refreshIndex.remove(it.key) }
+                } else if (refresh.isNotBlank()) {
+                    refreshIndex.remove(refresh)?.let { jwtIndex.remove(it.token) }
+                }
+                success(request, """{"ok":true}""")
             }
 
             path.endsWith("/api/users/me") && request.method == "GET" -> {

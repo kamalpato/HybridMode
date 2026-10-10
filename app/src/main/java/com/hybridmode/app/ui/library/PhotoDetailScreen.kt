@@ -2,6 +2,7 @@ package com.hybridmode.app.ui.library
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -19,6 +20,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material3.Button
 import androidx.compose.material3.CenterAlignedTopAppBar
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -34,6 +36,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -65,13 +68,13 @@ import com.hybridmode.app.ui.util.DateFormats
 import com.hybridmode.app.ui.util.ImageRequests
 import com.hybridmode.common.connectivity.ConnectivityStatus
 import com.hybridmode.common.result.AppResult
-import com.hybridmode.domain.model.MediaUpload
-import com.hybridmode.domain.model.UploadSchema
-import com.hybridmode.domain.model.UploadSyncStatus
-import com.hybridmode.domain.usecase.connectivity.ObserveConnectivityUseCase
-import com.hybridmode.domain.usecase.upload.DeleteUploadUseCase
-import com.hybridmode.domain.usecase.upload.ObserveUploadUseCase
-import com.hybridmode.domain.usecase.upload.RetryUploadUseCase
+import com.hybridmode.domain.reporting.FieldReport
+import com.hybridmode.domain.reporting.ReportCaptureMode
+import com.hybridmode.domain.reporting.ReportSyncStatus
+import com.hybridmode.domain.application.connectivity.ObserveConnectivityUseCase
+import com.hybridmode.domain.application.reporting.DeleteUploadUseCase
+import com.hybridmode.domain.application.reporting.ObserveUploadUseCase
+import com.hybridmode.domain.application.reporting.RetryUploadUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -80,6 +83,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -139,6 +143,17 @@ fun PhotoDetailScreen(
             snackbarHost = { SnackbarHost(snackbar) },
         ) { padding ->
             val upload = state.upload
+            if (state.isLoading) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(padding),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    CircularProgressIndicator()
+                }
+                return@Scaffold
+            }
             if (upload == null) {
                 Column(
                     Modifier
@@ -173,7 +188,7 @@ fun PhotoDetailScreen(
                     AsyncImage(
                         model = ImageRequests.file(
                             context = context,
-                            path = upload.localFilePath,
+                            path = upload.localImagePath.value,
                             widthPx = screenWidthPx,
                             heightPx = heroHeightPx,
                         ),
@@ -188,7 +203,7 @@ fun PhotoDetailScreen(
 
                     SoftPanel {
                         Text(
-                            upload.title,
+                            upload.title.value,
                             style = MaterialTheme.typography.headlineSmall.copy(
                                 fontWeight = FontWeight.SemiBold,
                             ),
@@ -201,7 +216,7 @@ fun PhotoDetailScreen(
                         )
                     }
 
-                    if (upload.description.isNotBlank()) {
+                    if (upload.description.value.isNotBlank()) {
                         SoftPanel {
                             Text(
                                 "Description",
@@ -212,7 +227,7 @@ fun PhotoDetailScreen(
                             )
                             HorizontalDivider(color = Mist100, thickness = 0.5.dp)
                             Text(
-                                upload.description,
+                                upload.description.value,
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = Stone600,
                             )
@@ -221,8 +236,8 @@ fun PhotoDetailScreen(
 
                     SoftPanel {
                         val chipColor = when (upload.syncStatus) {
-                            UploadSyncStatus.Synced -> OnlineGreen
-                            UploadSyncStatus.Failed -> MaterialTheme.colorScheme.error
+                            ReportSyncStatus.Synced -> OnlineGreen
+                            ReportSyncStatus.Failed -> MaterialTheme.colorScheme.error
                             else -> Copper500
                         }
                         StatusChip(text = detailStatus(upload), color = chipColor)
@@ -230,9 +245,9 @@ fun PhotoDetailScreen(
                         DetailMeta("Created", DateFormats.dateTime(upload.createdAtEpochMs))
                         DetailMeta(
                             "Mode",
-                            when (upload.schema) {
-                                UploadSchema.Online -> "Online"
-                                UploadSchema.Offline -> "Offline"
+                            when (upload.captureMode) {
+                                ReportCaptureMode.Online -> "Online"
+                                ReportCaptureMode.Offline -> "Offline"
                             },
                         )
                         DetailMeta(
@@ -247,11 +262,7 @@ fun PhotoDetailScreen(
                         }
                     }
 
-                    if (
-                        state.online &&
-                        (upload.syncStatus == UploadSyncStatus.PendingOffline ||
-                            upload.syncStatus == UploadSyncStatus.Failed)
-                    ) {
+                    if (state.online && upload.canRetry()) {
                         Button(
                             onClick = viewModel::sendNow,
                             modifier = Modifier
@@ -301,15 +312,16 @@ private fun DetailMeta(label: String, value: String) {
     }
 }
 
-private fun detailStatus(upload: MediaUpload): String = when (upload.syncStatus) {
-    UploadSyncStatus.Synced -> "Synced"
-    UploadSyncStatus.PendingOffline -> "Pending"
-    UploadSyncStatus.Failed -> "Failed"
-    UploadSyncStatus.Uploading -> "Uploading"
+private fun detailStatus(upload: FieldReport): String = when (upload.syncStatus) {
+    ReportSyncStatus.Synced -> "Synced"
+    ReportSyncStatus.PendingOffline -> "Pending"
+    ReportSyncStatus.Failed -> "Failed"
+    ReportSyncStatus.Uploading -> "Uploading"
 }
 
 data class PhotoDetailUiState(
-    val upload: MediaUpload? = null,
+    val upload: FieldReport? = null,
+    val isLoading: Boolean = true,
     val online: Boolean = false,
     val message: String? = null,
 )
@@ -325,24 +337,40 @@ class PhotoDetailViewModel @Inject constructor(
 
     private val photoId = MutableStateFlow("")
     private val message = MutableStateFlow<String?>(null)
+    private val resolved = MutableStateFlow(false)
 
     private val uploadFlow = photoId.flatMapLatest { id ->
-        if (id.isBlank()) flowOf(null) else observeUploadUseCase(id)
+        resolved.value = false
+        if (id.isBlank()) {
+            flowOf(null)
+        } else {
+            observeUploadUseCase(id).map { upload ->
+                resolved.value = true
+                upload
+            }
+        }
     }
 
     val uiState: StateFlow<PhotoDetailUiState> = combine(
         uploadFlow,
         observeConnectivityUseCase(),
         message,
-    ) { upload, connectivity, msg ->
+        resolved,
+    ) { upload, connectivity, msg, ready ->
         PhotoDetailUiState(
             upload = upload,
+            isLoading = photoId.value.isNotBlank() && !ready,
             online = connectivity == ConnectivityStatus.Online,
             message = msg,
         )
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), PhotoDetailUiState())
+    }.stateIn(
+        viewModelScope,
+        SharingStarted.WhileSubscribed(5_000),
+        PhotoDetailUiState(isLoading = true),
+    )
 
     fun bind(id: String) {
+        resolved.value = false
         photoId.value = id
     }
 

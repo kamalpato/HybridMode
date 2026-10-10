@@ -6,7 +6,7 @@ import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
 import com.hybridmode.common.connectivity.ConnectivityStatus
-import com.hybridmode.domain.repository.ConnectivityRepository
+import com.hybridmode.domain.connectivity.ConnectivityRepository
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow

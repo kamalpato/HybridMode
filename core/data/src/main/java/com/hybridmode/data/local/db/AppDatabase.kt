@@ -10,7 +10,7 @@ import com.hybridmode.data.local.db.entity.UserEntity
 @Database(
     entities = [UserEntity::class, UploadEntity::class],
     version = 3,
-    exportSchema = false,
+    exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun userDao(): UserDao

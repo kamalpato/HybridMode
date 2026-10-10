@@ -2,7 +2,7 @@ package com.hybridmode.data.local.db.entity
 
 import androidx.room.Entity
 import androidx.room.PrimaryKey
-import com.hybridmode.domain.model.User
+import com.hybridmode.domain.auth.User
 
 @Entity(tableName = "users")
 data class UserEntity(
@@ -12,7 +12,7 @@ data class UserEntity(
     val createdAtEpochMs: Long,
     val cachedAtEpochMs: Long,
 ) {
-    fun toDomain(): User = User(
+    fun toDomain(): User = User.rehydrate(
         id = id,
         email = email,
         displayName = displayName,
@@ -22,8 +22,8 @@ data class UserEntity(
     companion object {
         fun fromDomain(user: User, cachedAtEpochMs: Long): UserEntity = UserEntity(
             id = user.id,
-            email = user.email,
-            displayName = user.displayName,
+            email = user.email.value,
+            displayName = user.displayName.value,
             createdAtEpochMs = user.createdAtEpochMs,
             cachedAtEpochMs = cachedAtEpochMs,
         )

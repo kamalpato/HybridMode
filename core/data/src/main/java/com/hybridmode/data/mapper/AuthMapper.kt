@@ -3,13 +3,13 @@ package com.hybridmode.data.mapper
 import com.hybridmode.common.time.Clock
 import com.hybridmode.data.remote.dto.StrapiAuthResponseDto
 import com.hybridmode.data.remote.dto.StrapiUserDto
-import com.hybridmode.domain.model.AuthTokens
-import com.hybridmode.domain.model.User
+import com.hybridmode.domain.auth.AuthTokens
+import com.hybridmode.domain.auth.User
 import java.time.Instant
 import java.time.OffsetDateTime
 import java.time.format.DateTimeParseException
 
-fun StrapiUserDto.toDomain(): User = User(
+fun StrapiUserDto.toDomain(): User = User.rehydrate(
     id = id.toString(),
     email = email,
     displayName = username?.takeIf { it.isNotBlank() } ?: email.substringBefore("@"),

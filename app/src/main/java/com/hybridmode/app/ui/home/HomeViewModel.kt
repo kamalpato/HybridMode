@@ -3,11 +3,11 @@ package com.hybridmode.app.ui.home
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.hybridmode.common.connectivity.ConnectivityStatus
-import com.hybridmode.domain.model.AuthSession
-import com.hybridmode.domain.model.User
-import com.hybridmode.domain.usecase.auth.LogoutUseCase
-import com.hybridmode.domain.usecase.auth.ObserveSessionUseCase
-import com.hybridmode.domain.usecase.connectivity.ObserveConnectivityUseCase
+import com.hybridmode.domain.auth.AuthSession
+import com.hybridmode.domain.auth.User
+import com.hybridmode.domain.application.auth.LogoutUseCase
+import com.hybridmode.domain.application.auth.ObserveSessionUseCase
+import com.hybridmode.domain.application.connectivity.ObserveConnectivityUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted

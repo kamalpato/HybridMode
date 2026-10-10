@@ -29,7 +29,7 @@ interface UploadDao {
         """
         SELECT * FROM uploads
         WHERE ownerUserId = :ownerUserId
-          AND syncStatus IN ('PendingOffline', 'Failed')
+          AND syncStatus IN ('PendingOffline', 'Failed', 'Uploading')
         ORDER BY createdAtEpochMs ASC
         """
     )

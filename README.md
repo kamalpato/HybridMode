@@ -16,14 +16,20 @@ npm run backend
 ./gradlew :app:installDebug
 ```
 
-## Architecture
+## Architecture (DDD)
 
-| Module | Responsibility |
-|--------|----------------|
-| `:app` | Jetpack Compose UI, navigation, ViewModels |
-| `:core:domain` | Entities, repository contracts, use cases |
-| `:core:data` | Retrofit ↔ Strapi, Room cache, encrypted tokens |
-| `:core:common` | Shared `AppResult`, clock, connectivity status |
+Full Domain-Driven Design with Clean dependency rule: **UI → Application → Domain ← Infrastructure**.
+
+| Module / package | Responsibility |
+|------------------|----------------|
+| `:app` | Presentation |
+| `:core:domain` `shared/` | `AggregateRoot` (event sourcing buffer), `ValueObject`, `DomainEvent`, `DomainEventPublisher` |
+| `:core:domain` `auth/` | Auth bounded context — `User` aggregate, `Email`/`UserId`/`DisplayName` VOs, session/tokens, auth events, `AuthRepository` |
+| `:core:domain` `reporting/` | Reporting bounded context — `FieldReport` aggregate + invariants, report VOs, sync domain service, report events, `FieldReportRepository` |
+| `:core:domain` `application/` | Application services (use cases) that orchestrate aggregates and publish domain events |
+| `:core:data` | Infrastructure / anti-corruption (Strapi DTOs ↔ domain, Room, tokens, sync) |
+| `:core:common` | Shared kernel |
+| `backend/` | Strapi 5 API |
 
 ## Strapi integration (stock API)
 
@@ -51,28 +57,24 @@ Gradle prints the active values on every build: `[HybridMode] config → BASE_UR
 |---------|--------|------|
 | Login | `POST` | `/api/auth/local` (`identifier`, `password`) |
 | Register | `POST` | `/api/auth/local/register` (`username`, `email`, `password`) |
-| Me / refresh check | `GET` | `/api/users/me` |
+| Refresh | `POST` | `/api/auth/refresh` (`refreshToken`) |
+| Logout / revoke | `POST` | `/api/auth/logout` (Bearer + optional `refreshToken`) |
+| Me | `GET` | `/api/users/me` |
 | Upload | `POST` | `/api/upload` (`files` + `fileInfo`) |
 
-### Auth & 5-minute token policy
+### Auth & session policy
 
-- Strapi returns `{ jwt, user }` only (no refresh token).
-- App stores JWT and applies a **local max TTL of 5 minutes**.
-- **Refresh** = `GET /api/users/me`; if JWT still valid, renews the local 5-minute window.
-- If Strapi returns 401, the session is cleared.
+- Strapi runs with `jwtManagement: 'refresh'` (`backend/config/plugins.ts`): short-lived access JWT + rotatable refresh token.
+- App stores both tokens; access lifetime is clamped by `ACCESS_TOKEN_TTL_MS` (default 5 min).
+- **Refresh** = `POST /api/auth/refresh`; on 401 the local session is cleared.
+- **Logout** = best-effort `POST /api/auth/logout` (server revoke), then always clear local tokens/user cache.
 - **Offline**: cached session remains usable for local work (including queued uploads).
 
-Recommended Strapi JWT setting (`config/plugins.js` / `plugins.ts`):
+### Room migrations
 
-```js
-module.exports = {
-  'users-permissions': {
-    config: {
-      jwt: { expiresIn: '7d' }, // server lifespan; app still clamps to 5 minutes locally
-    },
-  },
-};
-```
+- Schema export: `core/data/schemas/` (commit new JSON when bumping `@Database` version).
+- `AppMigrations` holds real SQL upgrades (e.g. `2 → 3` adds `uploads.ownerUserId`).
+- Only pre-release version `1` still uses destructive fallback.
 
 ### Strapi permissions checklist
 

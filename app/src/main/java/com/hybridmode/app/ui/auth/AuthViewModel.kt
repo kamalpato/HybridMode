@@ -2,9 +2,10 @@ package com.hybridmode.app.ui.auth
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.hybridmode.app.BuildConfig
 import com.hybridmode.common.result.AppResult
-import com.hybridmode.domain.usecase.auth.LoginUseCase
-import com.hybridmode.domain.usecase.auth.RegisterUseCase
+import com.hybridmode.domain.application.auth.LoginUseCase
+import com.hybridmode.domain.application.auth.RegisterUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -29,10 +30,11 @@ class AuthViewModel @Inject constructor(
 ) : ViewModel() {
 
     private val _loginState = MutableStateFlow(
-        AuthFormState(
-            email = "demo@hybridmode.app",
-            password = "password123",
-        )
+        if (BuildConfig.DEBUG) {
+            AuthFormState(email = "demo@hybridmode.app", password = "password123")
+        } else {
+            AuthFormState()
+        }
     )
     val loginState: StateFlow<AuthFormState> = _loginState.asStateFlow()
 

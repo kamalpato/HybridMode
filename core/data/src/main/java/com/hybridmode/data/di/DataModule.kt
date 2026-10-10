@@ -7,6 +7,7 @@ import com.hybridmode.common.time.SystemClock
 import com.hybridmode.data.BuildConfig
 import com.hybridmode.data.connectivity.AndroidConnectivityRepository
 import com.hybridmode.data.local.db.AppDatabase
+import com.hybridmode.data.local.db.AppMigrations
 import com.hybridmode.data.local.db.dao.UploadDao
 import com.hybridmode.data.local.db.dao.UserDao
 import com.hybridmode.data.remote.api.AuthApi
@@ -16,10 +17,12 @@ import com.hybridmode.data.remote.network.KotlinxSerializationConverterFactory
 import com.hybridmode.data.repository.AuthRepositoryImpl
 import com.hybridmode.data.repository.ProfileRepositoryImpl
 import com.hybridmode.data.repository.UploadRepositoryImpl
-import com.hybridmode.domain.repository.AuthRepository
-import com.hybridmode.domain.repository.ConnectivityRepository
-import com.hybridmode.domain.repository.ProfileRepository
-import com.hybridmode.domain.repository.UploadRepository
+import com.hybridmode.domain.auth.AuthRepository
+import com.hybridmode.domain.connectivity.ConnectivityRepository
+import com.hybridmode.domain.profile.ProfileRepository
+import com.hybridmode.domain.reporting.FieldReportRepository
+import com.hybridmode.domain.shared.DomainEventPublisher
+import com.hybridmode.domain.shared.LoggingDomainEventPublisher
 import dagger.Binds
 import dagger.Module
 import dagger.Provides
@@ -49,7 +52,7 @@ abstract class RepositoryBindingsModule {
 
     @Binds
     @Singleton
-    abstract fun bindUploadRepository(impl: UploadRepositoryImpl): UploadRepository
+    abstract fun bindFieldReportRepository(impl: UploadRepositoryImpl): FieldReportRepository
 
     @Binds
     @Singleton
@@ -65,6 +68,10 @@ object DataModule {
     @Provides
     @Singleton
     fun provideClock(): Clock = SystemClock
+
+    @Provides
+    @Singleton
+    fun provideDomainEventPublisher(): DomainEventPublisher = LoggingDomainEventPublisher()
 
     @Provides
     @Singleton
@@ -84,7 +91,9 @@ object DataModule {
     @Singleton
     fun provideDatabase(@ApplicationContext context: Context): AppDatabase =
         Room.databaseBuilder(context, AppDatabase::class.java, "hybrid_mode.db")
-            .fallbackToDestructiveMigration()
+            .addMigrations(*AppMigrations.ALL)
+            // v1 had no exported schema; wipe only that pre-release starting version.
+            .fallbackToDestructiveMigrationFrom(1)
             .build()
 
     @Provides

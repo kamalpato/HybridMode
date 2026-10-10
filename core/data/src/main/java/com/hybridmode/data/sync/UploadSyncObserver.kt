@@ -2,8 +2,8 @@ package com.hybridmode.data.sync
 
 import com.hybridmode.common.connectivity.ConnectivityStatus
 import com.hybridmode.common.result.AppResult
-import com.hybridmode.domain.repository.ConnectivityRepository
-import com.hybridmode.domain.repository.UploadRepository
+import com.hybridmode.domain.connectivity.ConnectivityRepository
+import com.hybridmode.domain.reporting.FieldReportRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -17,7 +17,7 @@ import javax.inject.Singleton
 @Singleton
 class UploadSyncObserver @Inject constructor(
     private val connectivityRepository: ConnectivityRepository,
-    private val uploadRepository: UploadRepository,
+    private val fieldReportRepository: FieldReportRepository,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var started = false
@@ -30,18 +30,17 @@ class UploadSyncObserver @Inject constructor(
                 .distinctUntilChanged()
                 .filter { it == ConnectivityStatus.Online }
                 .collect {
-                    when (val result = uploadRepository.syncPending()) {
-                        is AppResult.Success -> {
-                            if (result.data.synced > 0) {
-                                Timber.i(
-                                    "Auto-synced %d pending upload(s)",
-                                    result.data.synced,
-                                )
-                            }
-                        }
-                        is AppResult.Error -> {
-                            Timber.w("Auto-sync skipped: %s", result.failure.message)
-                        }
+                    when (val result = fieldReportRepository.syncPending()) {
+                        is AppResult.Success -> Timber.i(
+                            "Auto-sync: attempted=%s synced=%s failed=%s",
+                            result.data.pendingAttempted,
+                            result.data.synced,
+                            result.data.failed,
+                        )
+                        is AppResult.Error -> Timber.w(
+                            "Auto-sync skipped/failed: %s",
+                            result.failure.message,
+                        )
                     }
                 }
         }

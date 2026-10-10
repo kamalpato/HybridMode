@@ -4,10 +4,10 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.hybridmode.common.connectivity.ConnectivityStatus
 import com.hybridmode.common.result.AppResult
-import com.hybridmode.domain.model.UploadSchema
-import com.hybridmode.domain.model.UploadSyncStatus
-import com.hybridmode.domain.usecase.connectivity.ObserveConnectivityUseCase
-import com.hybridmode.domain.usecase.upload.SubmitUploadUseCase
+import com.hybridmode.domain.reporting.ReportCaptureMode
+import com.hybridmode.domain.reporting.ReportSyncStatus
+import com.hybridmode.domain.application.connectivity.ObserveConnectivityUseCase
+import com.hybridmode.domain.application.reporting.SubmitUploadUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -28,7 +28,7 @@ data class UploadFormState(
 data class UploadUiState(
     val form: UploadFormState = UploadFormState(),
     val connectivity: ConnectivityStatus = ConnectivityStatus.Offline,
-    val activeSchema: UploadSchema = UploadSchema.Offline,
+    val activeSchema: ReportCaptureMode = ReportCaptureMode.Offline,
     val isSubmitting: Boolean = false,
     val message: String? = null,
 )
@@ -51,9 +51,9 @@ class UploadViewModel @Inject constructor(
             form = formState,
             connectivity = connectivity,
             activeSchema = if (connectivity == ConnectivityStatus.Online) {
-                UploadSchema.Online
+                ReportCaptureMode.Online
             } else {
-                UploadSchema.Offline
+                ReportCaptureMode.Offline
             },
             isSubmitting = epi.isSubmitting,
             message = epi.message,
@@ -86,9 +86,10 @@ class UploadViewModel @Inject constructor(
     }
 
     fun submit(onSuccess: () -> Unit = {}) {
+        if (ephemeral.value.isSubmitting) return
         val current = form.value
+        ephemeral.update { it.copy(isSubmitting = true, message = null) }
         viewModelScope.launch {
-            ephemeral.update { it.copy(isSubmitting = true, message = null) }
             when (
                 val result = submitUploadUseCase(
                     title = current.title,
@@ -100,12 +101,12 @@ class UploadViewModel @Inject constructor(
                 is AppResult.Success -> {
                     form.value = UploadFormState()
                     val message = when (result.data.syncStatus) {
-                        UploadSyncStatus.Synced -> "Report uploaded successfully."
-                        UploadSyncStatus.PendingOffline ->
+                        ReportSyncStatus.Synced -> "Report uploaded successfully."
+                        ReportSyncStatus.PendingOffline ->
                             "Report saved offline. It will sync when you are online."
-                        UploadSyncStatus.Failed ->
-                            "Saved offline, but upload failed. Retry from Reports."
-                        UploadSyncStatus.Uploading -> "Uploading…"
+                        ReportSyncStatus.Failed ->
+                            "Saved on device. Upload failed — retry from Reports."
+                        ReportSyncStatus.Uploading -> "Uploading…"
                     }
                     ephemeral.update {
                         it.copy(isSubmitting = false, message = message)

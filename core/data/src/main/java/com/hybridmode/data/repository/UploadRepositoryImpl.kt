@@ -9,26 +9,22 @@ import com.hybridmode.data.local.db.dao.UploadDao
 import com.hybridmode.data.local.db.dao.UserDao
 import com.hybridmode.data.local.db.entity.UploadEntity
 import com.hybridmode.data.local.file.LocalImageStore
-import com.hybridmode.data.local.secure.SecureTokenStore
 import com.hybridmode.data.mapper.absoluteUrl
 import com.hybridmode.data.mapper.buildStrapiFileInfoJson
-import com.hybridmode.data.mapper.toTokens
-import com.hybridmode.data.remote.api.AuthApi
 import com.hybridmode.data.remote.api.UploadApi
-import com.hybridmode.data.remote.dto.StrapiRefreshRequestDto
 import com.hybridmode.data.remote.network.NetworkErrorMapper
-import com.hybridmode.domain.model.AuthTokens
-import com.hybridmode.domain.model.MediaUpload
-import com.hybridmode.domain.model.NewMediaUpload
-import com.hybridmode.domain.model.UploadSchema
-import com.hybridmode.domain.model.UploadSyncReport
-import com.hybridmode.domain.model.UploadSyncStatus
-import com.hybridmode.domain.repository.ConnectivityRepository
-import com.hybridmode.domain.repository.UploadRepository
+import com.hybridmode.domain.auth.AuthRepository
+import com.hybridmode.domain.connectivity.ConnectivityRepository
+import com.hybridmode.domain.reporting.FieldReport
+import com.hybridmode.domain.reporting.FieldReportRepository
+import com.hybridmode.domain.reporting.FieldReportSyncReport
+import com.hybridmode.domain.reporting.NewFieldReport
+import com.hybridmode.domain.reporting.ReportSyncDomainService
+import com.hybridmode.domain.reporting.ReportSyncStatus
+import com.hybridmode.domain.shared.DomainEventPublisher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
-import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
@@ -53,18 +49,18 @@ class UploadRepositoryImpl @Inject constructor(
     private val uploadDao: UploadDao,
     private val userDao: UserDao,
     private val uploadApi: UploadApi,
-    private val authApi: AuthApi,
+    private val authRepository: AuthRepository,
     private val localImageStore: LocalImageStore,
-    private val tokenStore: SecureTokenStore,
     private val connectivityRepository: ConnectivityRepository,
     private val clock: Clock,
     private val json: Json,
+    private val eventPublisher: DomainEventPublisher,
     @ApplicationScope appScope: CoroutineScope,
-) : UploadRepository {
+) : FieldReportRepository {
 
     private val mutex = Mutex()
 
-    private val uploads: Flow<List<MediaUpload>> = userDao.observeCurrentUser()
+    private val reports: Flow<List<FieldReport>> = userDao.observeCurrentUser()
         .flatMapLatest { user ->
             if (user == null) {
                 flowOf(emptyList())
@@ -72,16 +68,16 @@ class UploadRepositoryImpl @Inject constructor(
                 uploadDao.observeByOwner(user.id).map { list -> list.map { it.toDomain() } }
             }
         }
-        .distinctUntilChanged()
         .shareIn(
             scope = appScope,
-            started = SharingStarted.WhileSubscribed(5_000),
+            // Eager + zero replay expiry so logout cannot flash another user's list.
+            started = SharingStarted.Eagerly,
             replay = 1,
         )
 
-    override fun observeUploads(): Flow<List<MediaUpload>> = uploads
+    override fun observeReports(): Flow<List<FieldReport>> = reports
 
-    override fun observeUpload(id: String): Flow<MediaUpload?> =
+    override fun observeReport(id: String): Flow<FieldReport?> =
         userDao.observeCurrentUser()
             .flatMapLatest { user ->
                 if (user == null) {
@@ -94,9 +90,8 @@ class UploadRepositoryImpl @Inject constructor(
                     }
                 }
             }
-            .distinctUntilChanged()
 
-    override suspend fun submit(input: NewMediaUpload): AppResult<MediaUpload> = mutex.withLock {
+    override suspend fun submit(input: NewFieldReport): AppResult<FieldReport> = mutex.withLock {
         val ownerUserId = userDao.getCurrentUser()?.id
             ?: return AppResult.Error(
                 AppFailure.Unauthorized("Please sign in to submit a report")
@@ -105,7 +100,6 @@ class UploadRepositoryImpl @Inject constructor(
         val now = clock.nowMillis()
         val id = UUID.randomUUID().toString()
         val online = connectivityRepository.currentStatus() == ConnectivityStatus.Online
-        val schema = if (online) UploadSchema.Online else UploadSchema.Offline
 
         val localFile = runCatching {
             localImageStore.persistFromUri(input.sourceUri, input.mimeType)
@@ -118,41 +112,47 @@ class UploadRepositoryImpl @Inject constructor(
             )
         }
 
-        var upload = MediaUpload(
-            id = id,
-            ownerUserId = ownerUserId,
-            title = input.title,
-            description = input.description,
-            localFilePath = localFile.absolutePath,
-            mimeType = input.mimeType,
-            schema = schema,
-            syncStatus = if (online) UploadSyncStatus.Uploading else UploadSyncStatus.PendingOffline,
-            remoteUrl = null,
-            errorMessage = null,
-            createdAtEpochMs = now,
-            syncedAtEpochMs = null,
-        )
-        uploadDao.upsert(UploadEntity.fromDomain(upload))
+        var report = if (online) {
+            FieldReport.startOnlineUpload(
+                id = id,
+                ownerUserId = ownerUserId,
+                title = input.title,
+                description = input.description,
+                localFilePath = localFile.absolutePath,
+                mimeType = input.mimeType,
+                createdAtEpochMs = now,
+            )
+        } else {
+            FieldReport.queueOffline(
+                id = id,
+                ownerUserId = ownerUserId,
+                title = input.title,
+                description = input.description,
+                localFilePath = localFile.absolutePath,
+                mimeType = input.mimeType,
+                createdAtEpochMs = now,
+            )
+        }
+        uploadDao.upsert(UploadEntity.fromDomain(report))
+        eventPublisher.publish(report.pullDomainEvents())
 
         if (!online) {
-            Timber.i("Offline schema: queued upload id=%s owner=%s", id, ownerUserId)
-            return AppResult.Success(upload)
+            Timber.i("Offline schema: queued report id=%s owner=%s", id, ownerUserId)
+            return AppResult.Success(report)
         }
 
-        return when (val result = uploadToRemote(upload)) {
+        return when (val result = uploadToRemote(report)) {
             is AppResult.Success -> AppResult.Success(result.data)
             is AppResult.Error -> {
-                upload = upload.copy(
-                    syncStatus = UploadSyncStatus.Failed,
-                    errorMessage = result.failure.message,
+                // Already persisted as Failed inside uploadToRemote; treat as saved locally.
+                AppResult.Success(
+                    uploadDao.getById(report.id)?.toDomain() ?: report.markFailed(result.failure.message)
                 )
-                uploadDao.upsert(UploadEntity.fromDomain(upload))
-                AppResult.Error(result.failure)
             }
         }
     }
 
-    override suspend fun syncPending(): AppResult<UploadSyncReport> = mutex.withLock {
+    override suspend fun syncPending(): AppResult<FieldReportSyncReport> = mutex.withLock {
         if (connectivityRepository.currentStatus() != ConnectivityStatus.Online) {
             return AppResult.Error(AppFailure.Network("Cannot sync while offline"))
         }
@@ -162,13 +162,17 @@ class UploadRepositoryImpl @Inject constructor(
         var syncedCount = 0
         var failedCount = 0
         for (entity in pending) {
-            when (uploadToRemote(entity.toDomain())) {
+            val report = entity.toDomain()
+            if (!ReportSyncDomainService.canAttemptRemoteSync(online = true, report = report)) {
+                continue
+            }
+            when (uploadToRemote(report)) {
                 is AppResult.Success -> syncedCount++
                 is AppResult.Error -> failedCount++
             }
         }
         AppResult.Success(
-            UploadSyncReport(
+            FieldReportSyncReport(
                 pendingAttempted = pending.size,
                 synced = syncedCount,
                 failed = failedCount,
@@ -177,54 +181,64 @@ class UploadRepositoryImpl @Inject constructor(
         )
     }
 
-    override suspend fun retry(uploadId: String): AppResult<MediaUpload> = mutex.withLock {
+    override suspend fun retry(reportId: String): AppResult<FieldReport> = mutex.withLock {
         if (connectivityRepository.currentStatus() != ConnectivityStatus.Online) {
             return AppResult.Error(AppFailure.Network("Retry requires an internet connection"))
         }
         val ownerUserId = userDao.getCurrentUser()?.id
             ?: return AppResult.Error(AppFailure.Unauthorized("Please sign in"))
-        val existing = uploadDao.getById(uploadId)?.toDomain()
-            ?.takeIf { it.ownerUserId == ownerUserId }
-            ?: return AppResult.Error(AppFailure.NotFound("Upload not found"))
-        val uploading = existing.copy(
-            syncStatus = UploadSyncStatus.Uploading,
-            errorMessage = null,
-            schema = UploadSchema.Online,
-        )
+        val existing = uploadDao.getById(reportId)?.toDomain()
+            ?.takeIf { it.isOwnedBy(ownerUserId) }
+            ?: return AppResult.Error(AppFailure.NotFound("Report not found"))
+        if (existing.syncStatus == ReportSyncStatus.Synced) {
+            return AppResult.Success(existing)
+        }
+        val uploading = existing.markUploading()
+            ?: return AppResult.Error(AppFailure.Validation("This report cannot be uploaded now"))
         uploadDao.upsert(UploadEntity.fromDomain(uploading))
+        eventPublisher.publish(uploading.pullDomainEvents())
         uploadToRemote(uploading)
     }
 
-    override suspend fun delete(uploadId: String): AppResult<Unit> = mutex.withLock {
+    override suspend fun delete(reportId: String): AppResult<Unit> = mutex.withLock {
         val ownerUserId = userDao.getCurrentUser()?.id
             ?: return AppResult.Error(AppFailure.Unauthorized("Please sign in"))
-        val existing = uploadDao.getById(uploadId)
+        val existing = uploadDao.getById(reportId)
             ?.takeIf { it.ownerUserId == ownerUserId }
-            ?: return AppResult.Error(AppFailure.NotFound("Upload not found"))
+            ?: return AppResult.Error(AppFailure.NotFound("Report not found"))
         localImageStore.deleteIfExists(existing.localFilePath)
-        uploadDao.deleteById(uploadId)
+        uploadDao.deleteById(reportId)
         AppResult.Success(Unit)
     }
 
-    private suspend fun uploadToRemote(upload: MediaUpload): AppResult<MediaUpload> {
-        val tokens = ensureFreshAccessToken()
-            ?: return AppResult.Error(
-                AppFailure.Unauthorized(
-                    "Your session expired. Please sign in again."
-                )
-            )
+    private suspend fun uploadToRemote(report: FieldReport): AppResult<FieldReport> {
+        val tokens = when (val tokenResult = authRepository.ensureValidAccessToken()) {
+            is AppResult.Success -> tokenResult.data
+            is AppResult.Error -> {
+                val failed = report.markFailed(tokenResult.failure.message)
+                uploadDao.upsert(UploadEntity.fromDomain(failed))
+                eventPublisher.publish(failed.pullDomainEvents())
+                return AppResult.Error(tokenResult.failure)
+            }
+        }
 
-        val file = File(upload.localFilePath)
+        val file = File(report.localImagePath.value)
         if (!file.exists()) {
+            val failed = report.markFailed("Local image file missing")
+            uploadDao.upsert(UploadEntity.fromDomain(failed))
+            eventPublisher.publish(failed.pullDomainEvents())
             return AppResult.Error(AppFailure.NotFound("Local image file missing"))
         }
 
         return runCatching {
-            val mediaType = upload.mimeType.toMediaTypeOrNull()
+            val mediaType = report.mimeType.value.toMediaTypeOrNull()
             val fileBody = file.asRequestBody(mediaType)
             val part = MultipartBody.Part.createFormData("files", file.name, fileBody)
-            val fileInfo = buildStrapiFileInfoJson(json, upload.title, upload.description)
-                .toRequestBody(TEXT)
+            val fileInfo = buildStrapiFileInfoJson(
+                json,
+                report.title.value,
+                report.description.value,
+            ).toRequestBody(TEXT)
 
             val response = uploadApi.upload(
                 bearer = "Bearer ${tokens.accessToken}",
@@ -234,47 +248,20 @@ class UploadRepositoryImpl @Inject constructor(
             val uploaded = response.firstOrNull()
                 ?: error("Strapi upload returned an empty list")
 
-            val synced = upload.copy(
-                syncStatus = UploadSyncStatus.Synced,
-                schema = UploadSchema.Online,
-                remoteUrl = uploaded.absoluteUrl(),
-                errorMessage = null,
-                syncedAtEpochMs = clock.nowMillis(),
-            )
+            val synced = report.markSynced(uploaded.absoluteUrl(), clock.nowMillis())
             uploadDao.upsert(UploadEntity.fromDomain(synced))
+            eventPublisher.publish(synced.pullDomainEvents())
             synced
         }.fold(
             onSuccess = { AppResult.Success(it) },
             onFailure = { error ->
                 val failure = NetworkErrorMapper.map(error, json)
-                val failed = upload.copy(
-                    syncStatus = UploadSyncStatus.Failed,
-                    errorMessage = failure.message,
-                )
+                val failed = report.markFailed(failure.message)
                 uploadDao.upsert(UploadEntity.fromDomain(failed))
+                eventPublisher.publish(failed.pullDomainEvents())
                 AppResult.Error(failure)
             },
         )
-    }
-
-    private suspend fun ensureFreshAccessToken(): AuthTokens? {
-        val current = tokenStore.read() ?: return null
-        if (!current.isExpired(clock.nowMillis())) return current
-
-        val hasRefresh = current.refreshToken.isNotBlank() &&
-            current.refreshToken != current.accessToken
-        if (!hasRefresh) return null
-
-        return runCatching {
-            val response = authApi.refresh(StrapiRefreshRequestDto(current.refreshToken))
-            val renewed = response.toTokens(clock, previousRefresh = current.refreshToken)
-            tokenStore.save(renewed)
-            Timber.i("Refreshed access token before upload")
-            renewed
-        }.getOrElse {
-            Timber.w(it, "Token refresh before upload failed")
-            null
-        }
     }
 
     private companion object {

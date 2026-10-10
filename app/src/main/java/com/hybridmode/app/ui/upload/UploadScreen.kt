@@ -64,7 +64,7 @@ import com.hybridmode.app.ui.theme.Stone400
 import com.hybridmode.app.ui.theme.Stone600
 import com.hybridmode.app.ui.theme.Stone900
 import com.hybridmode.app.ui.util.ImageRequests
-import com.hybridmode.domain.model.UploadSchema
+import com.hybridmode.domain.reporting.ReportCaptureMode
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -155,7 +155,7 @@ fun UploadScreen(
                                     color = Stone900,
                                 )
                                 Text(
-                                    text = if (state.activeSchema == UploadSchema.Online) {
+                                    text = if (state.activeSchema == ReportCaptureMode.Online) {
                                         "You are online. This report will upload now."
                                     } else {
                                         "You are offline. This report will be saved and synced later."
@@ -298,7 +298,7 @@ fun UploadScreen(
                                         )
                                     } else {
                                         Text(
-                                            if (state.activeSchema == UploadSchema.Online) {
+                                            if (state.activeSchema == ReportCaptureMode.Online) {
                                                 "Submit"
                                             } else {
                                                 "Save offline"

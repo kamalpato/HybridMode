@@ -13,16 +13,17 @@ import com.hybridmode.data.mapper.toTokens
 import com.hybridmode.data.mapper.toUserOrNull
 import com.hybridmode.data.remote.api.AuthApi
 import com.hybridmode.data.remote.dto.StrapiLoginRequestDto
+import com.hybridmode.data.remote.dto.StrapiLogoutRequestDto
 import com.hybridmode.data.remote.dto.StrapiRefreshRequestDto
 import com.hybridmode.data.remote.dto.StrapiRegisterRequestDto
 import com.hybridmode.data.remote.network.NetworkErrorMapper
-import com.hybridmode.domain.model.AuthSession
-import com.hybridmode.domain.model.AuthTokens
-import com.hybridmode.domain.model.LoginCredentials
-import com.hybridmode.domain.model.RegisterCredentials
-import com.hybridmode.domain.model.User
-import com.hybridmode.domain.repository.AuthRepository
-import com.hybridmode.domain.repository.ConnectivityRepository
+import com.hybridmode.domain.auth.AuthSession
+import com.hybridmode.domain.auth.AuthTokens
+import com.hybridmode.domain.auth.LoginCredentials
+import com.hybridmode.domain.auth.RegisterCredentials
+import com.hybridmode.domain.auth.User
+import com.hybridmode.domain.auth.AuthRepository
+import com.hybridmode.domain.connectivity.ConnectivityRepository
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -53,12 +54,13 @@ class AuthRepositoryImpl @Inject constructor(
             runCatching {
                 val response = authApi.login(
                     StrapiLoginRequestDto(
-                        identifier = credentials.email,
+                        identifier = credentials.email.value,
                         password = credentials.password,
                     )
                 )
                 val user = response.toUserOrNull()
                     ?: error("Strapi login response missing user")
+                userDao.clear()
                 persistSession(user, response.toTokens(clock), offline = false)
             }.fold(
                 onSuccess = { AppResult.Success(it) },
@@ -69,20 +71,21 @@ class AuthRepositoryImpl @Inject constructor(
     override suspend fun register(credentials: RegisterCredentials): AppResult<AuthSession> =
         mutex.withLock {
             runCatching {
-                val username = credentials.displayName
+                val username = credentials.displayName.value
                     .trim()
                     .lowercase()
                     .replace(Regex("[^a-z0-9._-]"), "_")
-                    .ifBlank { credentials.email.substringBefore("@") }
+                    .ifBlank { credentials.email.value.substringBefore("@") }
                 val response = authApi.register(
                     StrapiRegisterRequestDto(
                         username = username,
-                        email = credentials.email,
+                        email = credentials.email.value,
                         password = credentials.password,
                     )
                 )
                 val user = response.toUserOrNull()
                     ?: error("Strapi register response missing user")
+                userDao.clear()
                 persistSession(user, response.toTokens(clock), offline = false)
             }.fold(
                 onSuccess = { AppResult.Success(it) },
@@ -101,7 +104,24 @@ class AuthRepositoryImpl @Inject constructor(
         val online = connectivityRepository.currentStatus() == ConnectivityStatus.Online
         return if (online) {
             if (tokens.isExpired(clock.nowMillis())) {
-                refreshLocked(tokens, cachedUser)
+                when (val refreshed = refreshLocked(tokens, cachedUser)) {
+                    is AppResult.Success -> refreshed
+                    is AppResult.Error -> {
+                        if (refreshed.failure is AppFailure.Unauthorized) {
+                            AppResult.Success(null)
+                        } else {
+                            // Network blip: keep a usable offline session instead of stranding Welcome.
+                            AppResult.Success(
+                                persistSession(
+                                    user = cachedUser,
+                                    tokens = tokens,
+                                    offline = true,
+                                    writeTokens = false,
+                                )
+                            )
+                        }
+                    }
+                }
             } else {
                 AppResult.Success(
                     persistSession(cachedUser, tokens, offline = false, writeTokens = false)
@@ -127,7 +147,33 @@ class AuthRepositoryImpl @Inject constructor(
         refreshLocked(tokens, cachedUser)
     }
 
+    override suspend fun ensureValidAccessToken(): AppResult<AuthTokens> = mutex.withLock {
+        val tokens = tokenStore.read()
+            ?: return AppResult.Error(AppFailure.Unauthorized())
+        if (!tokens.isExpired(clock.nowMillis())) {
+            return AppResult.Success(tokens)
+        }
+        val cachedUser = userDao.getCurrentUser()?.toDomain()
+        when (val refreshed = refreshLocked(tokens, cachedUser)) {
+            is AppResult.Success -> AppResult.Success(refreshed.data.tokens)
+            is AppResult.Error -> refreshed
+        }
+    }
+
     override suspend fun logout(): AppResult<Unit> = mutex.withLock {
+        val tokens = tokenStore.read()
+        if (tokens != null) {
+            runCatching {
+                authApi.logout(
+                    bearer = "Bearer ${tokens.accessToken}",
+                    body = StrapiLogoutRequestDto(
+                        refreshToken = tokens.refreshToken.takeIf { it.isNotBlank() },
+                    ),
+                )
+            }.onFailure { error ->
+                Timber.w(error, "Server logout/revoke failed; clearing local session anyway")
+            }
+        }
         clearLocal()
         AppResult.Success(Unit)
     }

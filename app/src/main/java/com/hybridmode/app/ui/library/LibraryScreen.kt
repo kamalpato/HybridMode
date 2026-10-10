@@ -76,9 +76,9 @@ import com.hybridmode.app.ui.theme.Stone600
 import com.hybridmode.app.ui.theme.Stone900
 import com.hybridmode.app.ui.util.DateFormats
 import com.hybridmode.app.ui.util.ImageRequests
-import com.hybridmode.domain.model.MediaUpload
-import com.hybridmode.domain.model.UploadSyncStatus
-import com.hybridmode.domain.usecase.upload.ObserveUploadsUseCase
+import com.hybridmode.domain.reporting.FieldReport
+import com.hybridmode.domain.reporting.ReportSyncStatus
+import com.hybridmode.domain.application.reporting.ObserveUploadsUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -100,7 +100,7 @@ enum class ReportSortOrder {
 }
 
 data class ReportsPageState(
-    val visibleItems: List<MediaUpload> = emptyList(),
+    val visibleItems: List<FieldReport> = emptyList(),
     val totalOnDevice: Int = 0,
     val filteredCount: Int = 0,
     val page: Int = 1,
@@ -467,21 +467,21 @@ private fun PagerControl(
 
 @Composable
 private fun ReportListRow(
-    report: MediaUpload,
+    report: FieldReport,
     onClick: () -> Unit,
 ) {
     val context = LocalContext.current
     val statusColor = when (report.syncStatus) {
-        UploadSyncStatus.Synced -> OnlineGreen
-        UploadSyncStatus.Failed -> Danger
-        UploadSyncStatus.Uploading -> MaterialTheme.colorScheme.primary
-        UploadSyncStatus.PendingOffline -> Copper500
+        ReportSyncStatus.Synced -> OnlineGreen
+        ReportSyncStatus.Failed -> Danger
+        ReportSyncStatus.Uploading -> MaterialTheme.colorScheme.primary
+        ReportSyncStatus.PendingOffline -> Copper500
     }
     val statusLabel = when (report.syncStatus) {
-        UploadSyncStatus.Synced -> "Synced"
-        UploadSyncStatus.PendingOffline -> "Pending"
-        UploadSyncStatus.Failed -> "Failed"
-        UploadSyncStatus.Uploading -> "Uploading"
+        ReportSyncStatus.Synced -> "Synced"
+        ReportSyncStatus.PendingOffline -> "Pending"
+        ReportSyncStatus.Failed -> "Failed"
+        ReportSyncStatus.Uploading -> "Uploading"
     }
     val interaction = remember { MutableInteractionSource() }
 
@@ -501,7 +501,7 @@ private fun ReportListRow(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         AsyncImage(
-            model = ImageRequests.thumbnail(context, report.localFilePath),
+            model = ImageRequests.thumbnail(context, report.localImagePath.value),
             contentDescription = null,
             contentScale = ContentScale.Crop,
             modifier = Modifier
@@ -514,7 +514,7 @@ private fun ReportListRow(
             verticalArrangement = Arrangement.spacedBy(3.dp),
         ) {
             Text(
-                text = report.title,
+                text = report.title.value,
                 style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Medium),
                 color = Stone900,
                 maxLines = 1,
@@ -525,9 +525,9 @@ private fun ReportListRow(
                 style = MaterialTheme.typography.labelMedium,
                 color = Stone400,
             )
-            if (report.description.isNotBlank()) {
+            if (report.description.value.isNotBlank()) {
                 Text(
-                    text = report.description,
+                    text = report.description.value,
                     style = MaterialTheme.typography.bodySmall,
                     color = Stone600,
                     maxLines = 1,
@@ -549,8 +549,8 @@ class ReportsViewModel @Inject constructor(
     private val query = MutableStateFlow("")
     private val sortOrder = MutableStateFlow(ReportSortOrder.NewestFirst)
 
-    private val allReports: StateFlow<List<MediaUpload>?> = observeUploadsUseCase()
-        .map<List<MediaUpload>, List<MediaUpload>?> { it }
+    private val allReports: StateFlow<List<FieldReport>?> = observeUploadsUseCase()
+        .map<List<FieldReport>, List<FieldReport>?> { it }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     private val debouncedQuery = query
@@ -573,7 +573,7 @@ class ReportsViewModel @Inject constructor(
         }
         val matched = all.filter { report ->
             val q = filterQuery.trim()
-            q.isEmpty() || report.title.contains(q, ignoreCase = true)
+            q.isEmpty() || report.title.value.contains(q, ignoreCase = true)
         }
         val filtered = when (order) {
             ReportSortOrder.NewestFirst -> matched

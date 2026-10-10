@@ -131,14 +131,14 @@ fun ProfileScreen(
                                 }
                                 Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                                     Text(
-                                        text = user?.displayName ?: "User",
+                                        text = user?.displayName?.value ?: "User",
                                         style = MaterialTheme.typography.titleLarge.copy(
                                             fontWeight = FontWeight.SemiBold,
                                         ),
                                         color = Stone900,
                                     )
                                     Text(
-                                        text = user?.email.orEmpty().ifBlank { "-" },
+                                        text = user?.email?.value.orEmpty().ifBlank { "-" },
                                         style = MaterialTheme.typography.bodyMedium,
                                         color = Stone400,
                                     )

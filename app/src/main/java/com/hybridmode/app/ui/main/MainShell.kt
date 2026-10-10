@@ -74,13 +74,17 @@ fun MainShell() {
         }
     }
 
+    // Flat tab graph: never save/restore tab stacks. Capture used to get saved onto
+    // Home via restoreState, so tapping Home after submit→Reports put Reports/Capture
+    // back on top and looked "stuck".
     fun goTab(route: String) {
         navController.navigate(route) {
             popUpTo(Routes.HOME) {
-                saveState = true
+                inclusive = route == Routes.HOME
+                saveState = false
             }
             launchSingleTop = true
-            restoreState = true
+            restoreState = false
         }
     }
 
@@ -256,9 +260,14 @@ private fun MainNavHost(
             UploadScreen(
                 onBack = { navController.popBackStack() },
                 onFinished = {
+                    // Drop Capture (and anything above Home), land on Reports. No saveState.
                     navController.navigate(Routes.REPORTS) {
-                        popUpTo(Routes.HOME) { inclusive = false }
+                        popUpTo(Routes.HOME) {
+                            inclusive = false
+                            saveState = false
+                        }
                         launchSingleTop = true
+                        restoreState = false
                     }
                 },
             )

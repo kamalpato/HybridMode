@@ -10,9 +10,9 @@ import com.hybridmode.data.local.secure.SecureTokenStore
 import com.hybridmode.data.mapper.toDomain
 import com.hybridmode.data.remote.api.AuthApi
 import com.hybridmode.data.remote.network.NetworkErrorMapper
-import com.hybridmode.domain.model.User
-import com.hybridmode.domain.repository.ConnectivityRepository
-import com.hybridmode.domain.repository.ProfileRepository
+import com.hybridmode.domain.auth.User
+import com.hybridmode.domain.connectivity.ConnectivityRepository
+import com.hybridmode.domain.profile.ProfileRepository
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.json.Json
