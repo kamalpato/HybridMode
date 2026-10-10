@@ -1,0 +1,14 @@
+{
+  "name": "hybridmodeapp",
+  "private": true,
+  "description": "HybridMode monorepo — Android app + Strapi backend",
+  "scripts": {
+    "backend": "npm --prefix backend run develop",
+    "backend:install": "npm --prefix backend install",
+    "backend:build": "npm --prefix backend run build",
+    "backend:start": "npm --prefix backend run start"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

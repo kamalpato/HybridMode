@@ -1,0 +1,30 @@
+# =============================================================================
+# HybridMode - machine-local settings
+# =============================================================================
+# 1. Copy this file:
+#      cp config.properties.example config.properties
+# 2. Edit config.properties for THIS laptop / device setup.
+# 3. config.properties is gitignored - each developer keeps their own copy.
+# =============================================================================
+
+# --- Strapi base URL (must end with /) ---
+# Real Android device (same Wi-Fi as this machine):
+#   Find Mac IP:  ipconfig getifaddr en0
+#   Example:      http://192.168.1.20:1337/
+# Android emulator:
+#   http://10.0.2.2:1337/
+# Production / staging:
+#   https://api.example.com/
+STRAPI_BASE_URL=http://10.0.2.2:1337/
+
+# Release builds use this if set (falls back to STRAPI_BASE_URL).
+RELEASE_BASE_URL=https://your-strapi-host/
+
+# --- Backend mode ---
+# false = call real Strapi at STRAPI_BASE_URL
+# true  = use in-app mock (demo@hybridmode.app / password123)
+USE_MOCK_BACKEND=false
+
+# --- Auth token policy (client-side max TTL) ---
+# 300000 = 5 minutes
+ACCESS_TOKEN_TTL_MS=300000
